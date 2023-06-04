@@ -4,31 +4,15 @@
 #come up with a pricing algorithm that will help us to determine
 #a price, if we were to come up with products in that product cateogry.
 
-# Load libraries
+# Standard - Transform and data visualization 
 library(tidyverse)
 library(dplyr)
-
-# Read bike orderlines data
-
-bike_orderlines_tbl <- readRDS("data/bike_orderlines.rds")
-glimpse(bike_orderlines_tbl)
-
-# Read bikes data
-bikes_tbl <- readRDS('data/bike_features_tbl.rds')
-glimpse(bikes_tbl)
-
-pkgs <- c("parsnip", "glmnet", "rpart", "rpart.plot", "ranger", "randomForest", "xgboost", "kernlab")
-# If any of these packages are not installed, run this: install.packages(pkgs)
-
-# Standard
-library(readxl)
-library(tidyverse)
 library(tidyquant)
 
 # Modeling
 library(parsnip)
 
-# Preprocessing & Sampling
+# Pre-processing & Sampling
 library(recipes)
 library(rsample)
 
@@ -39,16 +23,14 @@ library(yardstick)
 library(rpart)
 library(rpart.plot)
 
-# Source Scripts
-#source("00_scripts/separate_bikes_and_outlier_detection.R")
-
 # Read Data
 bike_orderlines_tbl <- read_rds("data/bike_orderlines.rds")
-
 glimpse(bike_orderlines_tbl)
 
+bikes_tbl <- readRDS('data/bike_features_tbl.rds')
+glimpse(bikes_tbl)
 
-# 1.0 PROBLEM DEFINITION ----
+# Part 1: Questions and Goal 
 # - Which Bike Categories are in high demand?
 # - Which Bike Categories are under represented?
 # - GOAL: Use a pricing algorithm to determine a new product price in a category gap
@@ -69,7 +51,7 @@ model_sales_tbl %>%
   
   ggplot(aes(frame_material, total_sales)) +
   geom_violin() +
-  geom_jitter(width = 0.1, alpha = 0.5, color = "#2c3e50") +
+  geom_jitter(width = 0.1, alpha = 0.5, color = "#3e502c") +
   #coord_flip() +
   facet_wrap(~ category_2) +
   scale_y_continuous(labels = scales::dollar_format(scale = 1e-6, suffix = "M", accuracy = 0.1)) +
@@ -80,7 +62,7 @@ model_sales_tbl %>%
   )
 
 
-# 2.0 TRAINING & TEST SETS ----
+# Part 2: Spiting Training and Test Sets
 
 bike_features_tbl <- bike_orderlines_tbl %>%
   
@@ -110,17 +92,15 @@ split_obj %>% testing() %>% distinct(model_base)
 train_tbl <- training(split_obj)
 test_tbl  <- testing(split_obj)
 
-# 3.0 LINEAR METHODS ----
+# Part 3: Linear Methods 
 ?linear_reg
 ?set_engine
 ?fit
 ?predict.model_fit
 ?metrics
 
-
-# 3.1 LINEAR REGRESSION - NO ENGINEERED FEATURES ----
-
-# 3.1.1 Model ----
+# 3.1 Linear Regression - No Engineered Features 
+# 3.1.1 Model 
 ?lm
 
 model_01_linear_lm_simple <- linear_reg(mode = "regression") %>%
@@ -134,15 +114,15 @@ model_01_linear_lm_simple %>%
   yardstick::metrics(truth = price, estimate = .pred)
 
 
-# mutate(residuals = price - .pred) %>%
-# 
-# summarize(
+#mutate(residuals = price - .pred) %>%
+
+#summarize(
 #     mae = abs(residuals) %>% mean(),
 #     rmse = mean(residuals^2)^0.5
 # )
 
 
-# 3.1.2 Feature Importance ----
+# 3.1.2 Feature Importance 
 model_01_linear_lm_simple
 
 model_01_linear_lm_simple$fit %>% class()
@@ -160,7 +140,7 @@ model_01_linear_lm_simple$fit %>%
   labs(title = "Linear Regression: Feature Importance",
        subtitle = "Model 01: Simple lm Model")
 
-# 3.1.3 Function to Calculate Metrics ----
+# 3.1.3 Function to Calculate Metrics 
 
 model_01_linear_lm_simple %>% 
   predict(new_data = test_tbl) %>%
@@ -181,9 +161,9 @@ calc_metrics <- function(model, new_data = test_tbl) {
 model_01_linear_lm_simple %>% calc_metrics(test_tbl)
 
 
-# 3.2 LINEAR REGRESSION - WITH ENGINEERED FEATURES ----
+# 3.2 Linear Regression - With Engineered Features 
 
-# 3.2.1 Model ----
+# 3.2.1 Model 
 train_tbl
 
 model_02_linear_lm_complex <- linear_reg("regression") %>%
@@ -193,7 +173,7 @@ model_02_linear_lm_complex <- linear_reg("regression") %>%
 model_02_linear_lm_complex %>% calc_metrics(new_data = test_tbl)
 
 
-# 3.2.2 Feature importance ----
+# 3.2.2 Feature importance 
 model_02_linear_lm_complex$fit %>%
   broom::tidy() %>%
   arrange(p.value) %>%
@@ -208,9 +188,9 @@ model_02_linear_lm_complex$fit %>%
        subtitle = "Model 02: Complex lm Model")
 
 
-# 3.3 PENALIZED REGRESSION ----
+# 3.3 Penalized Regression 
 
-# 3.3.1 Model ----
+# 3.3.1 Model 
 ?linear_reg
 ?glmnet::glmnet
 
@@ -221,31 +201,9 @@ model_03_linear_glmnet <- linear_reg(mode = "regression", penalty = 500, mixture
 model_03_linear_glmnet %>% calc_metrics(test_tbl)
 
 
-# 3.3.2 Feature Importance ----
-
-# This part has that lambda issue b/c it is making
-# MANY models instead of 1. Matt has note aobut this in course
-
-# model_03_linear_glmnet$fit %>%
-#     broom::tidy() %>%
-#     arrange(desc(abs(estimate))) %>%
-#     mutate(term = as_factor(term) %>% fct_rev()) %>%
-#     
-#     ggplot(aes(x = estimate, y = term)) +
-#     geom_point() +
-#     ggrepel::geom_label_repel(aes(label = scales::dollar(estimate, accuracy = 1)),
-#                               size = 3) +
-#     scale_x_continuous(labels = scales::dollar_format()) +
-#     labs(title = "Linear Regression: Feature Importance",
-#          subtitle = "Model 03: GLMNET Model")
-
-
-
-# 4.0 TREE-BASED METHODS ----
-
-# 4.1 DECISION TREES ----
-
-# 4.1.1 Model ----
+# 4.0 Tree-based Methods 
+# 4.1 Decision Trees
+# 4.1.1 Model 
 ?decision_tree
 ?rpart::rpart
 
@@ -258,7 +216,7 @@ model_04_tree_decision_tree <- decision_tree(mode = "regression",
 
 model_04_tree_decision_tree %>% calc_metrics(test_tbl)
 
-# 4.1.2 Decision Tree Plot ----
+# 4.1.2 Decision Tree Plot 
 ?rpart.plot()
 
 model_04_tree_decision_tree$fit %>%
@@ -274,13 +232,12 @@ model_04_tree_decision_tree$fit %>%
     main = "Model 04: Decision Tree", 
     box.palette = "Blues"
   )
-
 show.prp.palettes()
 
 
-# 4.2 RANDOM FOREST ----
+# 4.2 Random Forest 
 
-# 4.2.1 Model: ranger ----
+# 4.2.1 Model: ranger 
 ?rand_forest()
 ?ranger::ranger
 
@@ -293,7 +250,7 @@ model_05_rand_forest_ranger <- rand_forest(
 
 model_05_rand_forest_ranger %>% calc_metrics(test_tbl)
 
-# 4.2.2 ranger: Feature Importance ----
+# 4.2.2 ranger: Feature Importance
 
 model_05_rand_forest_ranger$fit %>% 
   ranger::importance() %>%
@@ -308,7 +265,7 @@ model_05_rand_forest_ranger$fit %>%
 
 
 
-# 4.2.3 Model randomForest ----
+# 4.2.3 Model randomForest 
 ?rand_forest()
 ?randomForest::randomForest
 
@@ -319,7 +276,7 @@ model_06_rand_forest_randomForest <- rand_forest("regression") %>%
 
 model_06_rand_forest_randomForest %>% calc_metrics(test_tbl)
 
-# 4.2.4 randomForest: Feature Importance ----
+# 4.2.4 randomForest: Feature Importance
 
 model_06_rand_forest_randomForest$fit %>%
   randomForest::importance() %>%
@@ -335,9 +292,8 @@ model_06_rand_forest_randomForest$fit %>%
   )
 
 
-# 4.3 XGBOOST ----
-
-# 4.3.1 Model ----
+# 4.3 XGBOOST 
+# 4.3.1 Model 
 ?boost_tree
 ?xgboost::xgboost
 
@@ -353,9 +309,8 @@ model_07_boost_tree_xgboost <- boost_tree(
 
 model_07_boost_tree_xgboost %>% calc_metrics(test_tbl)
 
-# 4.3.2 Feature Importance ----
+# 4.3.2 Feature Importance 
 ?xgboost::xgb.importance
-
 
 model_07_boost_tree_xgboost$fit %>%
   xgboost::xgb.importance(model = .) %>%
@@ -371,7 +326,7 @@ model_07_boost_tree_xgboost$fit %>%
   )
 
 
-# 5.0 TESTING THE ALGORITHMS OUT ----
+# 5.0 Testing The Algorithms 
 
 g1 <- bike_features_tbl %>%
   mutate(category_2 = as_factor(category_2) %>% 
@@ -379,7 +334,7 @@ g1 <- bike_features_tbl %>%
   
   ggplot(aes(category_2, y = price)) +
   geom_violin() +
-  geom_jitter(width = 0.1, alpha = 0.5, color = "#2c3e50") +
+  geom_jitter(width = 0.1, alpha = 0.5, color = "#3e502c") +
   coord_flip() +
   facet_wrap(~ frame_material) +
   scale_y_continuous(labels = scales::dollar_format()) +
@@ -389,7 +344,7 @@ g1 <- bike_features_tbl %>%
     y = "", x = "Category 2"
   )
 
-# 5.1 NEW JEKYLL MODEL ----
+# 5.1 New Jekyll Model 
 
 new_over_mountain_jekyll <- tibble(
   model = "Jekyll Al 1",
@@ -408,12 +363,12 @@ new_over_mountain_jekyll <- tibble(
 
 new_over_mountain_jekyll
 
-# Linear Methods ----
-
+# Linear Methods 
+#?? 
 predict(model_03_linear_glmnet, new_data = new_over_mountain_jekyll)
 
-# Tree-Based Methods ----
-
+# Tree-Based Methods 
+#??
 predict(model_07_boost_tree_xgboost, new_data = new_over_mountain_jekyll)
 
 
@@ -452,7 +407,7 @@ g2 <- g1 +
                            size = 3,
                            data = predictions_new_over_mountain_tbl)
 
-# 5.2 NEW TRIATHALON MODEL ----
+# 5.2 New Triathalon Model 
 
 new_triathalon_slice_tbl <- tibble(
   model = "Slice Al 1",
@@ -470,10 +425,10 @@ new_triathalon_slice_tbl <- tibble(
 ) 
 
 
-# Linear Methods ----
+# Linear Methods 
 predict(model_03_linear_glmnet, new_data = new_triathalon_slice_tbl)
 
-# Tree-Based Methods ----
+# Tree-Based Methods 
 predict(model_07_boost_tree_xgboost, new_data = new_triathalon_slice_tbl)
 
 # Iteration
@@ -493,21 +448,9 @@ g2 +
                            size = 3,
                            data = predictions_new_triathalon_tbl)
 
-# 6.0 ADDITIONAL ADVANCED CONCEPTS ----
-
-# - CLASSIFICATION - Binary & Multi-Class
-# - ADVANCED ALGORITHMS
-#   - SVMs - svm_poly() and svm_rbf() - Must be normalized
-#   - Neural Networks - keras - Must be normalized
-#   - Stacking Models 
-# - PREPROCESSING - recipes 
-# - HYPERPARAMETER TUNING - purrr
-# - SAMPLING & CROSS VALIDATION - rsample 
-# - AUTOMATIC MACHINE LEARNING - H2O
 
 
-
-# 7.0 BONUS - PREPROCESSING & SVM-Regression ----
+# 6.0 Preprocessing - Using Recipes
 
 library(recipes)
 
@@ -535,31 +478,10 @@ tidy(recipe_obj)
 scale <- tidy(recipe_obj, 5)
 center <- tidy(recipe_obj, 4)
 
-
-# SVM: Radial Basis
-?svm_rbf
-?kernlab::ksvm
-
-train_transformed_tbl %>% glimpse()
-
-model_08_svm_rbf <- svm_rbf("regression", cost = 10, rbf_sigma = 0.1, margin = 0.25) %>%
-  set_engine("kernlab", scaled = FALSE) %>%
-  fit(price ~ ., data = train_transformed_tbl)
-
-model_08_svm_rbf %>%
-  predict(new_data = test_transformed_tbl) %>%
-  mutate(
-    .pred = .pred * scale$value,
-    .pred = .pred + center$value,
-    .pred = exp(.pred)
-  ) %>%
-  bind_cols(test_tbl %>% select(price)) %>%
-  yardstick::metrics(truth = price, estimate = .pred)
-
 # Predictions
 
 bake(recipe_obj, new_data = new_over_mountain_jekyll) %>%
-  predict(object = model_08_svm_rbf, new_data = .) %>%
+  predict(object = model_02_linear_lm_complex, new_data = .) %>%
   mutate(
     .pred = .pred * scale$value,
     .pred = .pred + center$value,
@@ -587,9 +509,10 @@ bike_features_tbl %>%
   arrange(price)
 
 
-# 8.0 SAVING & LOADING MODELS ----
 
-fs::dir_create("00_models")
+# 7.0 Saving & Loading Models 
+
+fs::dir_create("models")
 
 models_tbl <- list(
   "MODEL_01__LM_SIMPLE"  = model_01_linear_lm_simple,
@@ -599,7 +522,6 @@ models_tbl <- list(
   "MODEL_05__RF_RANGER"       = model_05_rand_forest_ranger,
   "MODEL_06__RF_RANDOMFOREST" = model_06_rand_forest_randomForest,
   "MODEL_07__XGBOOST" = model_07_boost_tree_xgboost,
-  "MODEL_08__SVM"     = model_08_svm_rbf
 ) %>%
   enframe(name = "model_id", value = "model")
 
@@ -612,14 +534,15 @@ recipes_tbl <- list(
 ) %>%
   enframe(name = "recipe_id", value = "recipe")
 
-recipes_tbl %>% write_rds("00_models/recipes_tbl.rds")
+recipes_tbl %>% write_rds("models/recipes_tbl.rds")
 
-calc_metrics %>% write_rds("00_scripts/calc_metrics.rds")
+calc_metrics %>% write_rds("scripts/calc_metrics.rds")
 
 # Reading
 
-models_tbl <- read_rds("00_models/parsnip_models_tbl.rds")
+models_tbl <- read_rds("models/parsnip_models_tbl.rds")
 
-recipes_tbl <- read_rds("00_models/recipes_tbl.rds")
+recipes_tbl <- read_rds("models/recipes_tbl.rds")
 
-calc_metrics <- read_rds("00_scripts/calc_metrics.rds")
+calc_metrics <- read_rds("scripts/calc_metrics.rds")
+
