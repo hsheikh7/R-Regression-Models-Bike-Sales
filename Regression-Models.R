@@ -1,9 +1,5 @@
 
-### GOAL: Build Prediction Model for Pricing Algorithm
-#Our goal is to figure out what gaps exist in the products and 
-#come up with a pricing algorithm that will help us to determine
-#a price, if we were to come up with products in that product cateogry.
-
+#Load Libraries 
 # Standard - Transform and data visualization 
 library(tidyverse)
 library(dplyr)
@@ -15,6 +11,7 @@ library(parsnip)
 # Pre-processing & Sampling
 library(recipes)
 library(rsample)
+library(workflows)
 
 # Modeling Error Metrics
 library(yardstick)
@@ -30,10 +27,8 @@ glimpse(bike_orderlines_tbl)
 bikes_tbl <- readRDS('data/bike_features_tbl.rds')
 glimpse(bikes_tbl)
 
-# Part 1: Questions and Goal 
-# - Which Bike Categories are in high demand?
-# - Which Bike Categories are under represented?
-# - GOAL: Use a pricing algorithm to determine a new product price in a category gap
+# Step 1: Data preparation
+# Data Exploration
 
 model_sales_tbl <- bike_orderlines_tbl %>%
   select(total_price, model, category_2, frame_material) %>%
@@ -61,19 +56,78 @@ model_sales_tbl %>%
     x = "Frame Material", y = "Revenue"
   )
 
+#Function separate_bike_model  
 
-# Part 2: Spiting Training and Test Sets
+separate_bike_model <- function(data, keep_model_column = TRUE, append = TRUE) {
+  
+  # Append
+  if (!append) {
+    data <- data %>% select(model)
+  }
+  
+  # Pipeline
+  output_tbl <- data %>%
+    
+    # select(model) %>%
+    
+    # Fix typo
+    mutate(model = case_when(
+      model == "CAAD Disc Ultegra" ~ "CAAD12 Disc Ultegra",
+      model == "Syapse Carbon Tiagra" ~ "Synapse Carbon Tiagra",
+      model == "Supersix Evo Hi-Mod Utegra" ~ "Supersix Evo Hi-Mod Ultegra",
+      TRUE ~ model
+    )) %>%
+    
+    # separate using spaces
+    separate(col     = model, 
+             into    = str_c("model_", 1:7), 
+             sep     = " ", 
+             remove  = FALSE, 
+             fill    = "right") %>%
+    
+    # creating a "base" feature
+    mutate(model_base = case_when(
+      
+      # Fix Supersix Evo
+      str_detect(str_to_lower(model_1), "supersix") ~ str_c(model_1, model_2, sep = " "),
+      
+      # Fix Fat CAAD bikes
+      str_detect(str_to_lower(model_1), "fat") ~ str_c(model_1, model_2, sep = " "),
+      
+      # Fix Beast of the East
+      str_detect(str_to_lower(model_1), "beast") ~ str_c(model_1, model_2, model_3, model_4, sep = " "),
+      
+      # Fix Bad Habit
+      str_detect(str_to_lower(model_1), "bad") ~ str_c(model_1, model_2, sep = " "),
+      
+      # Fix Scalpel 29
+      str_detect(str_to_lower(model_2), "29") ~ str_c(model_1, model_2, sep = " "),
+      
+      # catch all
+      TRUE ~ model_1)
+    ) %>%
+    
+    # Get "tier" feature
+    mutate(model_tier = model %>% str_replace(model_base, replacement = "") %>% str_trim()) %>%
+    
+    # Remove unnecessary columns
+    select(-matches("model_[0-9]")) %>%
+    
+    
+
+  return(output_tbl)
+  
+}
+
+
+# Step 2: Spiting Training and Test Sets
 
 bike_features_tbl <- bike_orderlines_tbl %>%
   
   select(price, model, category_2, frame_material) %>%
-  
   distinct() %>%
-  
   mutate(id = row_number()) %>%
-  
   select(id, everything()) %>%
-  
   separate_bike_model(keep_model_column = T, append = T)
 
 bike_features_tbl
@@ -92,61 +146,9 @@ split_obj %>% testing() %>% distinct(model_base)
 train_tbl <- training(split_obj)
 test_tbl  <- testing(split_obj)
 
-# Part 3: Linear Methods 
-?linear_reg
-?set_engine
-?fit
-?predict.model_fit
-?metrics
-
-# 3.1 Linear Regression - No Engineered Features 
-# 3.1.1 Model 
-?lm
-
-model_01_linear_lm_simple <- linear_reg(mode = "regression") %>%
-  set_engine("lm") %>%
-  fit(price ~ category_2 + frame_material, data = train_tbl)
-
-model_01_linear_lm_simple %>% 
-  predict(new_data = test_tbl) %>%
-  
-  bind_cols(test_tbl %>% select(price)) %>%
-  yardstick::metrics(truth = price, estimate = .pred)
-
-
-#mutate(residuals = price - .pred) %>%
-
-#summarize(
-#     mae = abs(residuals) %>% mean(),
-#     rmse = mean(residuals^2)^0.5
-# )
-
-
-# 3.1.2 Feature Importance 
-model_01_linear_lm_simple
-
-model_01_linear_lm_simple$fit %>% class()
-
-model_01_linear_lm_simple$fit %>%
-  broom::tidy() %>%
-  arrange(p.value) %>%
-  mutate(term = as_factor(term) %>% fct_rev()) %>%
-  
-  ggplot(aes(x = estimate, y = term)) +
-  geom_point() +
-  ggrepel::geom_label_repel(aes(label = scales::dollar(estimate, accuracy = 1)),
-                            size = 3) +
-  scale_x_continuous(labels = scales::dollar_format()) +
-  labs(title = "Linear Regression: Feature Importance",
-       subtitle = "Model 01: Simple lm Model")
-
-# 3.1.3 Function to Calculate Metrics 
-
-model_01_linear_lm_simple %>% 
-  predict(new_data = test_tbl) %>%
-  
-  bind_cols(test_tbl %>% select(price)) %>%
-  yardstick::metrics(truth = price, estimate = .pred)
+# Step 3: Build a Model - I chose Tree-based Methods 
+# 3.1 Linear Regression 
+# Model 
 
 calc_metrics <- function(model, new_data = test_tbl) {
   
@@ -158,12 +160,6 @@ calc_metrics <- function(model, new_data = test_tbl) {
   
 }
 
-model_01_linear_lm_simple %>% calc_metrics(test_tbl)
-
-
-# 3.2 Linear Regression - With Engineered Features 
-
-# 3.2.1 Model 
 train_tbl
 
 model_02_linear_lm_complex <- linear_reg("regression") %>%
@@ -173,7 +169,7 @@ model_02_linear_lm_complex <- linear_reg("regression") %>%
 model_02_linear_lm_complex %>% calc_metrics(new_data = test_tbl)
 
 
-# 3.2.2 Feature importance 
+# 3.2.2 Feature importance ----
 model_02_linear_lm_complex$fit %>%
   broom::tidy() %>%
   arrange(p.value) %>%
@@ -188,278 +184,12 @@ model_02_linear_lm_complex$fit %>%
        subtitle = "Model 02: Complex lm Model")
 
 
-# 3.3 Penalized Regression 
-
-# 3.3.1 Model 
-?linear_reg
-?glmnet::glmnet
-
-model_03_linear_glmnet <- linear_reg(mode = "regression", penalty = 500, mixture = 0) %>%
-  set_engine("glmnet") %>%
-  fit(price ~ ., data = train_tbl %>% select(-id, -model, -model_tier))
-
-model_03_linear_glmnet %>% calc_metrics(test_tbl)
-
-
-# 4.0 Tree-based Methods 
-# 4.1 Decision Trees
-# 4.1.1 Model 
-?decision_tree
-?rpart::rpart
-
-model_04_tree_decision_tree <- decision_tree(mode = "regression", 
-                                             cost_complexity = 0.001, 
-                                             tree_depth      = 7, 
-                                             min_n           = 10) %>%
-  set_engine("rpart") %>%
-  fit(price ~ ., data = train_tbl %>% select(-id, -model, -model_tier))
-
-model_04_tree_decision_tree %>% calc_metrics(test_tbl)
-
-# 4.1.2 Decision Tree Plot 
-?rpart.plot()
-
-model_04_tree_decision_tree$fit %>%
-  rpart.plot(roundint = FALSE)
-
-model_04_tree_decision_tree$fit %>%
-  rpart.plot(
-    roundint = FALSE,
-    type = 1, 
-    extra = 101,
-    fallen.leaves = FALSE, 
-    cex = 0.8,
-    main = "Model 04: Decision Tree", 
-    box.palette = "Blues"
-  )
-show.prp.palettes()
-
-
-# 4.2 Random Forest 
-
-# 4.2.1 Model: ranger 
-?rand_forest()
-?ranger::ranger
-
-set.seed(1234)
-model_05_rand_forest_ranger <- rand_forest(
-  mode = "regression", mtry = 8, trees = 5000, min_n = 10
-) %>%
-  set_engine("ranger", replace = TRUE, splitrule = "extratrees", importance = "impurity") %>%
-  fit(price ~ ., data = train_tbl %>% select(-id, -model, -model_tier))
-
-model_05_rand_forest_ranger %>% calc_metrics(test_tbl)
-
-# 4.2.2 ranger: Feature Importance
-
-model_05_rand_forest_ranger$fit %>% 
-  ranger::importance() %>%
-  enframe() %>%
-  arrange(desc(value)) %>%
-  mutate(name = as_factor(name) %>% fct_rev()) %>%
-  
-  ggplot(aes(value, name)) +
-  geom_point() +
-  labs(title = "ranger: Variable Importance",
-       subtitle = "Model 05: Ranger Random Forest Model")
-
-
-
-# 4.2.3 Model randomForest 
-?rand_forest()
-?randomForest::randomForest
-
-set.seed(1234)
-model_06_rand_forest_randomForest <- rand_forest("regression") %>%
-  set_engine("randomForest") %>%
-  fit(price ~ ., data = train_tbl %>% select(-id, -model, -model_tier))
-
-model_06_rand_forest_randomForest %>% calc_metrics(test_tbl)
-
-# 4.2.4 randomForest: Feature Importance
-
-model_06_rand_forest_randomForest$fit %>%
-  randomForest::importance() %>%
-  as_tibble(rownames = "name") %>%
-  arrange(desc(IncNodePurity)) %>%
-  mutate(name = as_factor(name) %>% fct_rev()) %>%
-  
-  ggplot(aes(IncNodePurity, name)) +
-  geom_point() +
-  labs(
-    title = "randomForest: Variable Importance",
-    subtitle = "Model 06: randomForest Model"
-  )
-
-
-# 4.3 XGBOOST 
-# 4.3.1 Model 
-?boost_tree
-?xgboost::xgboost
-
-set.seed(1234)
-model_07_boost_tree_xgboost <- boost_tree(
-  mode = "regression", 
-  mtry = 30,
-  learn_rate = 0.25,
-  tree_depth = 7
-) %>%
-  set_engine("xgboost") %>%
-  fit(price ~ ., data = train_tbl %>% select(-id, -model, -model_tier))
-
-model_07_boost_tree_xgboost %>% calc_metrics(test_tbl)
-
-# 4.3.2 Feature Importance 
-?xgboost::xgb.importance
-
-model_07_boost_tree_xgboost$fit %>%
-  xgboost::xgb.importance(model = .) %>%
-  as_tibble() %>%
-  arrange(desc(Gain)) %>%
-  mutate(Feature = as_factor(Feature) %>% fct_rev()) %>%
-  
-  ggplot(aes(Gain, Feature)) +
-  geom_point() +
-  labs(
-    title = "XGBoost: Variable Importance",
-    subtitle = "Model 07: XGBoost Model"
-  )
-
-
-# 5.0 Testing The Algorithms 
-
-g1 <- bike_features_tbl %>%
-  mutate(category_2 = as_factor(category_2) %>% 
-           fct_reorder(price)) %>%
-  
-  ggplot(aes(category_2, y = price)) +
-  geom_violin() +
-  geom_jitter(width = 0.1, alpha = 0.5, color = "#3e502c") +
-  coord_flip() +
-  facet_wrap(~ frame_material) +
-  scale_y_continuous(labels = scales::dollar_format()) +
-  theme_tq() +
-  labs(
-    title = "Unit Price for Each Model",
-    y = "", x = "Category 2"
-  )
-
-# 5.1 New Jekyll Model 
-
-new_over_mountain_jekyll <- tibble(
-  model = "Jekyll Al 1",
-  frame_material = "Aluminum",
-  category_2 = "Over Mountain",
-  model_base = "Jekyll",
-  model_tier = "Aluminum 1",
-  black      = 0,
-  hi_mod     = 0,
-  team       = 0,
-  red        = 0,
-  ultegra    = 0,
-  dura_ace   = 0,
-  disc       = 0
-) 
-
-new_over_mountain_jekyll
-
-# Linear Methods 
-#?? 
-predict(model_03_linear_glmnet, new_data = new_over_mountain_jekyll)
-
-# Tree-Based Methods 
-#??
-predict(model_07_boost_tree_xgboost, new_data = new_over_mountain_jekyll)
-
-
-# Iteration
-models_tbl <- tibble(
-  model_id = str_c("Model 0", 1:7),
-  model = list(
-    model_01_linear_lm_simple,
-    model_02_linear_lm_complex,
-    model_03_linear_glmnet,
-    model_04_tree_decision_tree,
-    model_05_rand_forest_ranger,
-    model_06_rand_forest_randomForest,
-    model_07_boost_tree_xgboost
-  )
-)
-
-models_tbl
-
-# Add Predictions
-
-predictions_new_over_mountain_tbl <- models_tbl %>%
-  mutate(predictions = map(model, predict, new_data = new_over_mountain_jekyll)) %>%
-  unnest(predictions) %>%
-  mutate(category_2 = "Over Mountain") %>%
-  left_join(new_over_mountain_jekyll, by = "category_2")
-
-predictions_new_over_mountain_tbl
-
-# Update plot
-
-g2 <- g1 +
-  geom_point(aes(y = .pred), color = "red", alpha = 0.5,
-             data = predictions_new_over_mountain_tbl) +
-  ggrepel::geom_text_repel(aes(label = model_id, y = .pred),
-                           size = 3,
-                           data = predictions_new_over_mountain_tbl)
-
-# 5.2 New Triathalon Model 
-
-new_triathalon_slice_tbl <- tibble(
-  model = "Slice Al 1",
-  frame_material = "Aluminum",
-  category_2 = "Triathalon",
-  model_base = "Slice",
-  model_tier = "Ultegra",
-  black      = 0,
-  hi_mod     = 0,
-  team       = 0,
-  red        = 0,
-  ultegra    = 0,
-  dura_ace   = 0,
-  disc       = 0
-) 
-
-
-# Linear Methods 
-predict(model_03_linear_glmnet, new_data = new_triathalon_slice_tbl)
-
-# Tree-Based Methods 
-predict(model_07_boost_tree_xgboost, new_data = new_triathalon_slice_tbl)
-
-# Iteration
-predictions_new_triathalon_tbl <- models_tbl %>%
-  mutate(predictions = map(model, predict, new_data = new_triathalon_slice_tbl)) %>%
-  unnest(predictions) %>%
-  mutate(category_2 = "Triathalon", frame_material = "Aluminum")
-
-
-predictions_new_triathalon_tbl
-
-# Update Plot
-g2 +
-  geom_point(aes(y = .pred), color = "red", alpha = 0.5, 
-             data = predictions_new_triathalon_tbl) +
-  ggrepel::geom_text_repel(aes(y = .pred, label = model_id), 
-                           size = 3,
-                           data = predictions_new_triathalon_tbl)
-
-
-
-# 6.0 Preprocessing - Using Recipes
-
-library(recipes)
-
+# Step 4: Pre-processing - Using Recipes
+# Create features with the recipes package
 ?recipe
 ?step_dummy
 ?prep
 ?bake
-
-train_tbl
 
 recipe_obj <- recipe(price ~ ., data = train_tbl) %>%
   step_rm(id, model, model_tier) %>%
@@ -478,71 +208,36 @@ tidy(recipe_obj)
 scale <- tidy(recipe_obj, 5)
 center <- tidy(recipe_obj, 4)
 
-# Predictions
+# Step 5: Bundle the model and recipe with the workflow package
 
-bake(recipe_obj, new_data = new_over_mountain_jekyll) %>%
-  predict(object = model_02_linear_lm_complex, new_data = .) %>%
-  mutate(
-    .pred = .pred * scale$value,
-    .pred = .pred + center$value,
-    .pred = exp(.pred)
-  )
+linear_spec <- model_02_linear_lm_complex$spec
 
-predictions_new_over_mountain_tbl
+bike_workflow <- workflow() %>% 
+  add_model(linear_spec) %>% 
+  add_recipe(recipe_obj)
 
-g2
+bike_workflow
 
-g3
+# Step  6: Evaluate your model with the yardstick package
 
-bake(recipe_obj, new_data = new_triathalon_slice_tbl) %>%
-  predict(object = model_08_svm_rbf, new_data = .) %>%
-  mutate(
-    .pred = .pred * scale$value,
-    .pred = .pred + center$value,
-    .pred = exp(.pred)
-  )
+bike_fit <- 
+  bike_workflow %>% 
+  fit(data = train_tbl)
 
-predictions_new_triathalon_tbl
+bike_fit %>% 
+  pull_workflow_fit() %>% 
+  tidy()
 
-bike_features_tbl %>% 
-  filter(category_2 == "Endurance Road") %>%
-  arrange(price)
+predict(bike_fit, test_tbl)
 
+bike_pred <- 
+  predict(bike_fit, test_tbl, type = "prob") %>% 
+  bind_cols(test_tbl %>% select(total_price, model, category_2, frame_material)) 
+
+#Now I should calculate ROC but there is a problem
+# I can't fix it. Sorry! 
 
 
-# 7.0 Saving & Loading Models 
 
-fs::dir_create("models")
 
-models_tbl <- list(
-  "MODEL_01__LM_SIMPLE"  = model_01_linear_lm_simple,
-  "MODEL_02__LM_COMPLEX" = model_02_linear_lm_complex,
-  "MODEL_03__GLMNET"     = model_03_linear_glmnet,
-  "MODEL_04__DECISION_TREE"   = model_04_tree_decision_tree,
-  "MODEL_05__RF_RANGER"       = model_05_rand_forest_ranger,
-  "MODEL_06__RF_RANDOMFOREST" = model_06_rand_forest_randomForest,
-  "MODEL_07__XGBOOST" = model_07_boost_tree_xgboost,
-) %>%
-  enframe(name = "model_id", value = "model")
-
-models_tbl
-
-models_tbl %>% write_rds("00_models/parsnip_models_tbl.rds")
-
-recipes_tbl <- list(
-  "RECIPE_01" = recipe_obj
-) %>%
-  enframe(name = "recipe_id", value = "recipe")
-
-recipes_tbl %>% write_rds("models/recipes_tbl.rds")
-
-calc_metrics %>% write_rds("scripts/calc_metrics.rds")
-
-# Reading
-
-models_tbl <- read_rds("models/parsnip_models_tbl.rds")
-
-recipes_tbl <- read_rds("models/recipes_tbl.rds")
-
-calc_metrics <- read_rds("scripts/calc_metrics.rds")
 
